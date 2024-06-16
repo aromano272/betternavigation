@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.andreromano.betternavigation"
+    namespace = "com.aromano.betternavigation"
     compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {

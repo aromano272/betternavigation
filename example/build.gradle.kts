@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.andreromano.betternavigation"
+    namespace = "com.aromano.betternavigation"
     compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
@@ -60,6 +60,8 @@ dependencies {
 
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
+    implementation(libs.compose.material)
+    implementation(libs.compose.activity)
     debugImplementation(libs.compose.ui.tooling)
 
     implementation(libs.androidx.core.ktx)

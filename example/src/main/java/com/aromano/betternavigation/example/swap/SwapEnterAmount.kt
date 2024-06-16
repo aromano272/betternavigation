@@ -1,11 +1,10 @@
 package com.aromano.betternavigation.example.swap
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.material.Button
-import androidx.compose.material.Text
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import com.aromano.betternavigation.lib.NavArgs
-import java.io.Serializable
 
 internal data class SwapEnterAmountArgs(
     val source: String,
