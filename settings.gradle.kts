@@ -20,5 +20,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "BetterNavigation"
-include(":app")
+include(":example", ":lib")
  
