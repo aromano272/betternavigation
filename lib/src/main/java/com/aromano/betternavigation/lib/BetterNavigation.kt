@@ -1,10 +1,16 @@
 package com.aromano.betternavigation.lib
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import java.io.Serializable
 import java.util.Stack
 
@@ -55,16 +61,16 @@ fun NavHost(
     startGraph: Graph<Nothing>,
     content: GraphBuilder<Nothing>.() -> Unit,
 ) {
-    var currentNode: BackStackEntry<*, *>? by remember { mutableStateOf(null) }
-    navController.currentBackStackEntryChanged = { node ->
-        currentNode = node
+    val navContext = remember { NavContextImpl(navController) }
+    LaunchedEffect(Unit) {
+        GraphBuilderImpl(navController.rootNode, navController).content()
+        navController.init(startGraph)
     }
 
-    val navContext = NavContextImpl(navController)
+    val currentNode: BackStackEntry<*, *>? by navController.currentBackStackEntryFlow.collectAsState(null)
+    println("BOOM")
+    println(currentNode)
     currentNode?.content(navContext)
-
-    val rootGraphBuilder = GraphBuilderImpl(navController.rootNode, navController)
-    content(rootGraphBuilder)
 }
 
 class NavContextImpl(
@@ -92,7 +98,7 @@ data class DestinationNode<Args : NavArgs, D : Destination<Args>>(
 
 data class BackStackEntry<Args : NavArgs, D : Destination<Args>>(
     val destination: D,
-    val args: Args?,
+    val args: Args,
     private val content: @Composable (NavContext.(Args) -> Unit)?,
 ) {
     @Composable
@@ -102,17 +108,32 @@ data class BackStackEntry<Args : NavArgs, D : Destination<Args>>(
 class NavController {
     val rootNode = DestinationNode.createRootNode()
 
-    val backStack: Stack<BackStackEntry<*, *>> = Stack()
+    val backStackFlow = MutableStateFlow<Stack<BackStackEntry<*, *>>>(Stack())
+    val currentBackStackEntryFlow: Flow<BackStackEntry<*, *>?> = backStackFlow.map { it.lastOrNull() }
 
-    var currentBackStackEntryChanged: ((BackStackEntry<*, *>) -> Unit)? = null
+    fun init(startGraph: Graph<Nothing>) {
+       backStackFlow.update {
+           it.navigateInternal(startGraph, null)
+       }
+    }
 
     fun navigate(direction: Direction<Nothing>) {
-        when (direction.navOption) {
+        backStackFlow.update {
+            it.navigateInternal(direction.to, direction.navOption)
+        }
+    }
+
+    private fun Stack<BackStackEntry<*, *>>.navigateInternal(
+        to: Destination<Nothing>,
+        navOption: NavOption?
+    ): Stack<BackStackEntry<*, *>> {
+        val backStack = this.clone() as Stack<BackStackEntry<*, *>>
+        when (navOption) {
             is PopUpTo -> {
-                while (backStack.isNotEmpty() && backStack.peek().destination != direction.navOption.destination) {
+                while (backStack.isNotEmpty() && backStack.peek().destination != navOption.destination) {
                     backStack.pop()
                 }
-                if (backStack.isNotEmpty() && direction.navOption.inclusive) {
+                if (backStack.isNotEmpty() && navOption.inclusive) {
                     backStack.pop()
                 }
                 if (backStack.peek().destination is Graph<*>) {
@@ -122,17 +143,17 @@ class NavController {
             null -> {}
         }
 
-        if (direction.to is Graph) {
+        if (to is Graph) {
             val graphBackStackEntry = BackStackEntry(
-                destination = direction.to,
+                destination = to,
                 args = null,
                 content = null
             )
             backStack.push(graphBackStackEntry)
 
-            val graphNode = rootNode.findNodeByDestination(direction.to) ?: run {
+            val graphNode = rootNode.findNodeByDestination(to) ?: run {
                 printGraph()
-                throw IllegalStateException("Couldn't find ${direction.to} in the above NavController")
+                throw IllegalStateException("Couldn't find ${to} in the above NavController")
             }
             val graphStartDestination = (graphNode.destination as Graph).startDestination
             val graphStartNode = graphNode.findNodeByDestination(graphStartDestination) ?: run {
@@ -146,19 +167,19 @@ class NavController {
             )
             backStack.push(graphStartBackStackEntry)
         } else {
-            val destinationNode = rootNode.findNodeByDestination(direction.to) ?: run {
+            val destinationNode = rootNode.findNodeByDestination(to) ?: run {
                 printGraph()
-                throw IllegalStateException("Couldn't find ${direction.to} in the above NavController")
+                throw IllegalStateException("Couldn't find ${to} in the above NavController")
             }
             // TODO because we can only search down, we're assuming that there's no duplicate destination in the nodes
             val parentGraph = (backStack.peek().destination as? Graph<*>)
                 ?: rootNode.findParentOfNodeByDestination(backStack.peek().destination)?.destination ?: run {
                     printGraph()
-                    throw IllegalStateException("Couldn't parent of ${direction.to} in the above NavController")
+                    throw IllegalStateException("Couldn't parent of ${to} in the above NavController")
                 }
-            val destinationGraph = rootNode.findParentOfNodeByDestination(direction.to)?.destination ?: run {
+            val destinationGraph = rootNode.findParentOfNodeByDestination(to)?.destination ?: run {
                 printGraph()
-                throw IllegalStateException("Couldn't parent of ${direction.to} in the above NavController")
+                throw IllegalStateException("Couldn't parent of ${to} in the above NavController")
             }
 
             if (parentGraph != destinationGraph) {
@@ -171,7 +192,7 @@ class NavController {
             }
 
             val backStackEntry = BackStackEntry(
-                destination = direction.to,
+                destination = to,
                 args = null,
                 content = destinationNode.content
             )
@@ -183,7 +204,7 @@ class NavController {
             //      i gotta combine both of these worlds into a single place, ideally a sealed typesafe structure
         }
 
-        currentBackStackEntryChanged?.invoke(backStack.peek())
+        return backStack
     }
 
     fun <Args : NavArgs, To : Destination<Args>> navigate(direction: Direction<Args>, args: Args) {
@@ -193,12 +214,12 @@ class NavController {
 
     fun DestinationNode<*, *>.findParentOfNodeByDestination(destination: Destination<*>): DestinationNode<*, *>? {
         if (this.destination == destination) return this
-        return this.takeIf { this.children.any { this.findNodeByDestination(destination) != null } }
+        return this.takeIf { this.children.any { it.findNodeByDestination(destination) != null } }
     }
 
     fun DestinationNode<*, *>.findNodeByDestination(destination: Destination<*>): DestinationNode<*, *>? {
         if (this.destination == destination) return this
-        return this.children.firstOrNull { this.findNodeByDestination(destination) != null }
+        return this.children.firstOrNull { it.findNodeByDestination(destination) != null }
     }
 
     fun printGraph() {
